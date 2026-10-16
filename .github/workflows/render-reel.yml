@@ -24,6 +24,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Validate Reel ID
+        env:
+          REEL_ID: ${{ inputs.reel_id }}
+        run: |
+          if [[ ! "$REEL_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then
+            echo "::error::reel_id must be 1-64 letters, numbers, underscores, or hyphens, and start with a letter or number."
+            exit 1
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -55,3 +64,59 @@ jobs:
           path: out/reel.mp4
           if-no-files-found: error
           retention-days: 7
+
+  publish_public_video:
+    # Keep publishing disabled until GitHub Pages is configured and the repo
+    # variable PUBLIC_VIDEO_HOST_ENABLED is explicitly set to "true".
+    if: ${{ vars.PUBLIC_VIDEO_HOST_ENABLED == 'true' }}
+    needs: render
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: publish-reel-pages
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download rendered video
+        uses: actions/download-artifact@v4
+        with:
+          name: rendered-reel-${{ inputs.reel_id }}
+          path: out
+
+      - name: Preserve rendered video for the Pages branch update
+        env:
+          REEL_ID: ${{ inputs.reel_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/published-reel"
+          cp out/reel.mp4 "$RUNNER_TEMP/published-reel/${REEL_ID}.mp4"
+
+      - name: Publish video to the GitHub Pages branch
+        env:
+          REEL_ID: ${{ inputs.reel_id }}
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages
+            git switch --force-create gh-pages origin/gh-pages
+          else
+            git switch --orphan gh-pages
+            git rm -rf --ignore-unmatch .
+          fi
+
+          mkdir -p videos
+          cp "$RUNNER_TEMP/published-reel/${REEL_ID}.mp4" "videos/${REEL_ID}.mp4"
+          git add "videos/${REEL_ID}.mp4"
+          if git diff --cached --quiet; then
+            echo "No public video changes to publish."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Publish Reel ${REEL_ID}"
+          git push origin gh-pages
