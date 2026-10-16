@@ -1,0 +1,57 @@
+name: Render Instagram Reel
+
+on:
+  workflow_dispatch:
+    inputs:
+      reel_id:
+        description: "Unique Reel ID"
+        required: true
+        type: string
+      reel_text:
+        description: "Text displayed in the Reel"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare composition props
+        env:
+          REEL_ID: ${{ inputs.reel_id }}
+          REEL_TEXT: ${{ inputs.reel_text }}
+        run: |
+          node -e "require('fs').writeFileSync('props.json', JSON.stringify({text: process.env.REEL_TEXT, reelId: process.env.REEL_ID}))"
+
+      - name: Ensure Remotion browser
+        run: npx remotion browser ensure
+
+      - name: Render Reel
+        run: |
+          mkdir -p out
+          npx remotion render src/index.ts MyComp out/reel.mp4 --props=props.json --codec=h264
+
+      - name: Upload rendered video
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-reel-${{ inputs.reel_id }}
+          path: out/reel.mp4
+          if-no-files-found: error
+          retention-days: 7
